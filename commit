@@ -1,0 +1,464 @@
+import { useState, useEffect } from "react";
+
+const DEFAULT_CATEGORIES = [
+  { id: "learning", label: "学習", icon: "📚", color: "#6EE7B7" },
+  { id: "health", label: "健康", icon: "🌿", color: "#FCD34D" },
+  { id: "exercise", label: "運動", icon: "⚡", color: "#93C5FD" },
+  { id: "other", label: "その他", icon: "✦", color: "#F9A8D4" },
+];
+
+const PALETTE = [
+  "#6EE7B7","#FCD34D","#93C5FD","#F9A8D4","#C4B5FD",
+  "#FCA5A5","#6EE7F7","#BBF7D0","#FDE68A","#FBCFE8",
+  "#A5F3FC","#DDD6FE","#FED7AA","#D9F99D","#E9D5FF",
+];
+
+const ICONS = ["📚","🌿","⚡","✦","🎯","💪","🧘","🎨","🎵","💼","🍎","💧","🛌","🧠","✍️","🏃","🌅","🔬","💻","📝"];
+
+const today = () => new Date().toISOString().slice(0, 10);
+const formatDate = (d) => { const dt = new Date(d + "T00:00:00"); return `${dt.getMonth()+1}/${dt.getDate()}`; };
+const dayOfWeek = (d) => ["日","月","火","水","木","金","土"][new Date(d + "T00:00:00").getDay()];
+
+function getDatesInMonth(year, month) {
+  const dates = []; const d = new Date(year, month, 1);
+  while (d.getMonth() === month) { dates.push(d.toISOString().slice(0,10)); d.setDate(d.getDate()+1); }
+  return dates;
+}
+function getStreak(completions, dateStr) {
+  let streak = 0; let d = new Date(dateStr + "T00:00:00");
+  while (true) {
+    const s = d.toISOString().slice(0,10);
+    if (completions[s] && Object.values(completions[s]).some(Boolean)) { streak++; d.setDate(d.getDate()-1); } else break;
+  }
+  return streak;
+}
+
+function Modal({ title, onClose, children }) {
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.75)", zIndex:100, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}
+      onClick={onClose}>
+      <div style={{ background:"#12121c", border:"1px solid #2a2a3a", borderRadius:16, padding:24, width:"100%", maxWidth:360, maxHeight:"90vh", overflowY:"auto" }}
+        onClick={e => e.stopPropagation()}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
+          <span style={{ fontSize:16, fontWeight:600 }}>{title}</span>
+          <button onClick={onClose} style={{ background:"transparent", border:"none", color:"#666", fontSize:22, cursor:"pointer", lineHeight:1 }}>×</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+export default function HabitTracker() {
+  const [categories, setCategories] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("ht_cats") || "null") || DEFAULT_CATEGORIES; } catch { return DEFAULT_CATEGORIES; }
+  });
+  const [tasks, setTasks] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("ht_tasks") || "[]"); } catch { return []; }
+  });
+  const [completions, setCompletions] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("ht_comp") || "{}"); } catch { return {}; }
+  });
+  const [view, setView] = useState("today");
+  const [calDate, setCalDate] = useState(() => { const n = new Date(); return { year:n.getFullYear(), month:n.getMonth() }; });
+  const [selectedDate, setSelectedDate] = useState(today());
+  const [editingTask, setEditingTask] = useState(null);
+  const [newTask, setNewTask] = useState({ name:"", category:"" });
+  const [addingCategory, setAddingCategory] = useState(null);
+  const [showCatModal, setShowCatModal] = useState(false);
+  const [editingCat, setEditingCat] = useState(null);
+  const [catForm, setCatForm] = useState({ label:"", icon:"🎯", color: PALETTE[4] });
+
+  useEffect(() => { localStorage.setItem("ht_cats", JSON.stringify(categories)); }, [categories]);
+  useEffect(() => { localStorage.setItem("ht_tasks", JSON.stringify(tasks)); }, [tasks]);
+  useEffect(() => { localStorage.setItem("ht_comp", JSON.stringify(completions)); }, [completions]);
+
+  const todayStr = today();
+  const getCompletion = (date) => completions[date] || {};
+
+  const toggleTask = (taskId, date) => {
+    setCompletions(prev => {
+      const dayComp = { ...(prev[date] || {}) };
+      dayComp[taskId] = !dayComp[taskId];
+      return { ...prev, [date]: dayComp };
+    });
+  };
+
+  const addTask = () => {
+    if (!newTask.name.trim()) return;
+    const cat = addingCategory || categories[0]?.id;
+    setTasks(prev => [...prev, { id: Date.now().toString(), name: newTask.name, category: cat }]);
+    setNewTask({ name:"", category: cat });
+    setAddingCategory(null);
+  };
+
+  const deleteTask = (id) => setTasks(prev => prev.filter(t => t.id !== id));
+
+  const saveEdit = (id, name, category) => {
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, name, category } : t));
+    setEditingTask(null);
+  };
+
+  const getCategoryStats = (catId, date) => {
+    const catTasks = tasks.filter(t => t.category === catId);
+    if (!catTasks.length) return null;
+    const comp = getCompletion(date);
+    const done = catTasks.filter(t => comp[t.id]).length;
+    return { done, total: catTasks.length, pct: Math.round((done / catTasks.length) * 100) };
+  };
+
+  const getOverallStats = (date) => {
+    if (!tasks.length) return { done:0, total:0, pct:0 };
+    const comp = getCompletion(date);
+    const done = tasks.filter(t => comp[t.id]).length;
+    return { done, total: tasks.length, pct: Math.round((done / tasks.length) * 100) };
+  };
+
+  const openAddCat = () => { setCatForm({ label:"", icon:"🎯", color: PALETTE[4] }); setEditingCat(null); setShowCatModal(true); };
+  const openEditCat = (cat) => { setCatForm({ label:cat.label, icon:cat.icon, color:cat.color }); setEditingCat(cat); setShowCatModal(true); };
+
+  const saveCat = () => {
+    if (!catForm.label.trim()) return;
+    if (editingCat) {
+      setCategories(prev => prev.map(c => c.id === editingCat.id ? { ...c, ...catForm } : c));
+    } else {
+      setCategories(prev => [...prev, { id:"cat_"+Date.now(), ...catForm }]);
+    }
+    setShowCatModal(false);
+  };
+
+  const deleteCat = (id) => {
+    setCategories(prev => prev.filter(c => c.id !== id));
+    setTasks(prev => prev.filter(t => t.category !== id));
+    setShowCatModal(false);
+  };
+
+  const streak = getStreak(completions, todayStr);
+  const datesInMonth = getDatesInMonth(calDate.year, calDate.month);
+  const firstDay = new Date(calDate.year, calDate.month, 1).getDay();
+  const overall = getOverallStats(selectedDate);
+
+  return (
+    <div style={{ minHeight:"100vh", background:"#0a0a0f", color:"#e8e6e0", fontFamily:"'DM Sans','Noto Sans JP',sans-serif", display:"flex", flexDirection:"column" }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=Noto+Sans+JP:wght@300;400;500;600&display=swap');
+        * { box-sizing:border-box; margin:0; padding:0; }
+        ::-webkit-scrollbar { width:4px; }
+        ::-webkit-scrollbar-thumb { background:#333; border-radius:2px; }
+        .task-row { transition:background 0.15s; }
+        .task-row:hover { background:rgba(255,255,255,0.04) !important; }
+        .btn-pill { transition:all 0.15s; cursor:pointer; }
+        .btn-pill:hover { filter:brightness(1.2); transform:translateY(-1px); }
+        .check-box { transition:all 0.2s; cursor:pointer; }
+        .check-box:hover { transform:scale(1.1); }
+        .cal-day { transition:all 0.15s; cursor:pointer; }
+        .cal-day:hover { transform:scale(1.05); }
+        .icon-btn:hover { opacity:0.7; }
+        input, select { background:#161620; color:#e8e6e0; border:1px solid #2a2a3a; border-radius:8px; padding:8px 12px; outline:none; font-family:inherit; }
+        input:focus, select:focus { border-color:#6EE7B7; }
+      `}</style>
+
+      {/* Header */}
+      <div style={{ padding:"24px 20px 0", maxWidth:480, margin:"0 auto", width:"100%" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:4 }}>
+          <div>
+            <div style={{ fontSize:11, letterSpacing:3, color:"#555", textTransform:"uppercase", marginBottom:4 }}>HABIT TRACKER</div>
+            <div style={{ fontSize:26, fontWeight:600, letterSpacing:-0.5 }}>
+              {new Date().toLocaleDateString("ja-JP", { month:"long", day:"numeric", weekday:"short" })}
+            </div>
+          </div>
+          <div style={{ background: streak>0 ? "linear-gradient(135deg,#f97316,#fbbf24)" : "#1a1a25", borderRadius:14, padding:"10px 16px", textAlign:"center", boxShadow: streak>0 ? "0 0 20px rgba(249,115,22,0.3)" : "none" }}>
+            <div style={{ fontSize:22, fontWeight:700, lineHeight:1 }}>{streak}</div>
+            <div style={{ fontSize:10, color: streak>0 ? "rgba(255,255,255,0.8)" : "#555", marginTop:2 }}>日継続</div>
+          </div>
+        </div>
+
+        <div style={{ marginTop:20, marginBottom:8 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
+            <span style={{ fontSize:12, color:"#888" }}>本日の達成率</span>
+            <span style={{ fontSize:13, fontWeight:600, color:"#6EE7B7" }}>{overall.pct}%</span>
+          </div>
+          <div style={{ height:6, background:"#1a1a25", borderRadius:3, overflow:"hidden" }}>
+            <div style={{ height:"100%", width:`${overall.pct}%`, background:"linear-gradient(90deg,#6EE7B7,#34D399)", borderRadius:3, transition:"width 0.5s cubic-bezier(0.4,0,0.2,1)" }} />
+          </div>
+          <div style={{ fontSize:11, color:"#555", marginTop:4 }}>{overall.done} / {overall.total} タスク完了</div>
+        </div>
+
+        <div style={{ display:"flex", gap:8, marginTop:16, marginBottom:4 }}>
+          {["today","calendar"].map(v => (
+            <button key={v} className="btn-pill" onClick={() => setView(v)} style={{ padding:"7px 18px", borderRadius:20, border:"none", fontSize:13, fontWeight:500, background: view===v?"#6EE7B7":"#161620", color: view===v?"#0a0a0f":"#888", cursor:"pointer" }}>
+              {v==="today" ? "今日" : "カレンダー"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ flex:1, overflowY:"auto", maxWidth:480, margin:"0 auto", width:"100%", padding:"8px 20px 100px" }}>
+        {view === "today" ? (
+          <TodayView
+            tasks={tasks} categories={categories}
+            completions={completions} date={selectedDate}
+            onToggle={(id) => toggleTask(id, selectedDate)}
+            onDelete={deleteTask} editingTask={editingTask} setEditingTask={setEditingTask}
+            onSaveEdit={saveEdit} getCategoryStats={getCategoryStats}
+            addingCategory={addingCategory} setAddingCategory={setAddingCategory}
+            newTask={newTask} setNewTask={setNewTask} onAddTask={addTask}
+            onEditCat={openEditCat} onAddCat={openAddCat}
+          />
+        ) : (
+          <CalendarView
+            calDate={calDate} setCalDate={setCalDate}
+            datesInMonth={datesInMonth} firstDay={firstDay}
+            tasks={tasks} completions={completions}
+            selectedDate={selectedDate} setSelectedDate={setSelectedDate}
+            getOverallStats={getOverallStats} getCategoryStats={getCategoryStats}
+            categories={categories} onToggle={toggleTask}
+          />
+        )}
+      </div>
+
+      {showCatModal && (
+        <Modal title={editingCat ? "カテゴリを編集" : "カテゴリを追加"} onClose={() => setShowCatModal(false)}>
+          <div style={{ marginBottom:16 }}>
+            <div style={{ fontSize:12, color:"#888", marginBottom:6 }}>カテゴリ名</div>
+            <input value={catForm.label} onChange={e => setCatForm(p => ({...p, label:e.target.value}))}
+              onKeyDown={e => e.key==="Enter" && saveCat()}
+              placeholder="例：読書、瞑想..." style={{ width:"100%", fontSize:14 }} autoFocus />
+          </div>
+
+          <div style={{ marginBottom:16 }}>
+            <div style={{ fontSize:12, color:"#888", marginBottom:8 }}>アイコン</div>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+              {ICONS.map(ic => (
+                <span key={ic} onClick={() => setCatForm(p => ({...p, icon:ic}))} style={{
+                  fontSize:20, cursor:"pointer", transition:"transform 0.15s",
+                  background: catForm.icon===ic ? "#1e1e30" : "transparent",
+                  border: `2px solid ${catForm.icon===ic ? catForm.color : "transparent"}`,
+                  borderRadius:8, padding:"4px 5px", lineHeight:1, display:"inline-block"
+                }}>{ic}</span>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ marginBottom:22 }}>
+            <div style={{ fontSize:12, color:"#888", marginBottom:8 }}>カラー</div>
+            <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+              {PALETTE.map(col => (
+                <div key={col} onClick={() => setCatForm(p => ({...p, color:col}))} style={{
+                  width:26, height:26, borderRadius:"50%", background:col, cursor:"pointer",
+                  border: `3px solid ${catForm.color===col ? "#fff" : "transparent"}`,
+                  transition:"border 0.15s", boxSizing:"border-box"
+                }} />
+              ))}
+            </div>
+          </div>
+
+          {/* Preview */}
+          <div style={{ background:"#0f0f19", borderRadius:10, padding:"10px 14px", marginBottom:20, display:"flex", alignItems:"center", gap:8 }}>
+            <span style={{ fontSize:18 }}>{catForm.icon}</span>
+            <span style={{ fontSize:13, fontWeight:600, color:catForm.color, letterSpacing:1, textTransform:"uppercase" }}>{catForm.label || "プレビュー"}</span>
+          </div>
+
+          <div style={{ display:"flex", gap:8 }}>
+            <button onClick={saveCat} style={{ flex:1, background:catForm.color, color:"#0a0a0f", border:"none", borderRadius:10, padding:"11px 0", fontWeight:700, fontSize:14, cursor:"pointer" }}>
+              {editingCat ? "更新する" : "追加する"}
+            </button>
+            {editingCat && (
+              <button onClick={() => deleteCat(editingCat.id)} style={{ background:"#2a1520", color:"#f87171", border:"1px solid #3a1520", borderRadius:10, padding:"11px 16px", fontWeight:600, fontSize:13, cursor:"pointer" }}>
+                削除
+              </button>
+            )}
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function TodayView({ tasks, categories, completions, date, onToggle, onDelete, editingTask, setEditingTask, onSaveEdit, getCategoryStats, addingCategory, setAddingCategory, newTask, setNewTask, onAddTask, onEditCat, onAddCat }) {
+  return (
+    <div style={{ paddingTop:12 }}>
+      {categories.map(cat => {
+        const catTasks = tasks.filter(t => t.category === cat.id);
+        const stats = getCategoryStats(cat.id, date);
+        const isAdding = addingCategory === cat.id;
+        return (
+          <div key={cat.id} style={{ marginBottom:16 }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                <span style={{ fontSize:13, fontWeight:600, color:cat.color, letterSpacing:1, textTransform:"uppercase" }}>{cat.label}</span>
+                <button className="icon-btn" onClick={() => onEditCat(cat)} style={{ background:"transparent", border:"none", color:"#3a3a4a", cursor:"pointer", fontSize:12, padding:"1px 3px", transition:"opacity 0.15s" }}>✏️</button>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                {stats && (
+                  <div style={{ fontSize:12, color:"#555" }}>
+                    <span style={{ color:cat.color, fontWeight:600 }}>{stats.pct}%</span>
+                    <span style={{ marginLeft:4 }}>({stats.done}/{stats.total})</span>
+                  </div>
+                )}
+                <button onClick={() => { setAddingCategory(isAdding ? null : cat.id); setNewTask({ name:"", category:cat.id }); }} style={{
+                  background: isAdding ? cat.color : "transparent", color: isAdding ? "#0a0a0f" : cat.color,
+                  border:`1px solid ${cat.color}`, borderRadius:6, width:22, height:22, fontSize:14,
+                  display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", transition:"all 0.15s"
+                }}>+</button>
+              </div>
+            </div>
+
+            {stats && (
+              <div style={{ height:2, background:"#1a1a25", borderRadius:1, marginBottom:8, overflow:"hidden" }}>
+                <div style={{ height:"100%", width:`${stats.pct}%`, background:cat.color, borderRadius:1, transition:"width 0.5s" }} />
+              </div>
+            )}
+
+            <div style={{ borderRadius:12, overflow:"hidden", background:"#0f0f19", border:"1px solid #1e1e2e" }}>
+              {catTasks.length === 0 && !isAdding && (
+                <div style={{ padding:"14px 16px", fontSize:12, color:"#333", textAlign:"center" }}>タスクを追加してください</div>
+              )}
+              {catTasks.map((task, i) => {
+                const comp = (completions[date] || {})[task.id];
+                const isEditing = editingTask === task.id;
+                return (
+                  <TaskRow key={task.id} task={task} comp={comp} isEditing={isEditing}
+                    catColor={cat.color} isLast={i === catTasks.length - 1 && !isAdding}
+                    onToggle={() => onToggle(task.id)}
+                    onEdit={() => setEditingTask(isEditing ? null : task.id)}
+                    onDelete={() => onDelete(task.id)}
+                    onSave={(name, category) => onSaveEdit(task.id, name, category)}
+                    categories={categories}
+                  />
+                );
+              })}
+              {isAdding && (
+                <div style={{ padding:"10px 12px", borderTop: catTasks.length ? "1px solid #1a1a2e" : "none", display:"flex", gap:8 }}>
+                  <input value={newTask.name} onChange={e => setNewTask(p => ({...p, name:e.target.value}))}
+                    onKeyDown={e => e.key==="Enter" && onAddTask()}
+                    placeholder="タスク名を入力..." autoFocus style={{ flex:1, fontSize:13 }} />
+                  <button onClick={onAddTask} style={{ background:cat.color, color:"#0a0a0f", border:"none", borderRadius:6, padding:"0 14px", fontWeight:600, cursor:"pointer", fontSize:13 }}>追加</button>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+
+      <button onClick={onAddCat}
+        onMouseOver={e => { e.currentTarget.style.borderColor="#6EE7B7"; e.currentTarget.style.color="#6EE7B7"; }}
+        onMouseOut={e => { e.currentTarget.style.borderColor="#2a2a3a"; e.currentTarget.style.color="#555"; }}
+        style={{ width:"100%", padding:"12px", border:"1px dashed #2a2a3a", borderRadius:12, background:"transparent", color:"#555", cursor:"pointer", fontSize:13, marginTop:4, display:"flex", alignItems:"center", justifyContent:"center", gap:8, transition:"all 0.2s" }}>
+        <span style={{ fontSize:18, lineHeight:1 }}>+</span>
+        <span>カテゴリを追加</span>
+      </button>
+    </div>
+  );
+}
+
+function TaskRow({ task, comp, isEditing, catColor, isLast, onToggle, onEdit, onDelete, onSave, categories }) {
+  const [editName, setEditName] = useState(task.name);
+  const [editCat, setEditCat] = useState(task.category);
+  return (
+    <div className="task-row" style={{ borderBottom: isLast ? "none" : "1px solid #14141e" }}>
+      {isEditing ? (
+        <div style={{ padding:"10px 12px", display:"flex", gap:8, flexWrap:"wrap" }}>
+          <input value={editName} onChange={e => setEditName(e.target.value)} style={{ flex:1, minWidth:120, fontSize:13 }} />
+          <select value={editCat} onChange={e => setEditCat(e.target.value)} style={{ fontSize:12 }}>
+            {categories.map(c => <option key={c.id} value={c.id}>{c.icon} {c.label}</option>)}
+          </select>
+          <button onClick={() => onSave(editName, editCat)} style={{ background:catColor, color:"#0a0a0f", border:"none", borderRadius:6, padding:"0 12px", cursor:"pointer", fontWeight:600, fontSize:12 }}>保存</button>
+          <button onClick={onEdit} style={{ background:"#1a1a25", color:"#888", border:"none", borderRadius:6, padding:"0 12px", cursor:"pointer", fontSize:12 }}>取消</button>
+        </div>
+      ) : (
+        <div style={{ padding:"11px 12px", display:"flex", alignItems:"center", gap:10 }}>
+          <div className="check-box" onClick={onToggle} style={{ width:20, height:20, borderRadius:6, border:`2px solid ${comp ? catColor:"#2a2a3a"}`, background: comp ? catColor:"transparent", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
+            {comp && <span style={{ fontSize:11, color:"#0a0a0f", fontWeight:700 }}>✓</span>}
+          </div>
+          <span style={{ flex:1, fontSize:14, color: comp?"#444":"#ccc", textDecoration: comp?"line-through":"none", transition:"all 0.2s" }}>{task.name}</span>
+          <button onClick={onEdit} style={{ background:"transparent", border:"none", color:"#444", cursor:"pointer", fontSize:13, padding:"2px 4px" }}>✏️</button>
+          <button onClick={onDelete} style={{ background:"transparent", border:"none", color:"#333", cursor:"pointer", fontSize:13, padding:"2px 4px" }}>🗑</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CalendarView({ calDate, setCalDate, datesInMonth, firstDay, tasks, completions, selectedDate, setSelectedDate, getOverallStats, getCategoryStats, categories, onToggle }) {
+  const monthName = new Date(calDate.year, calDate.month, 1).toLocaleDateString("ja-JP", { year:"numeric", month:"long" });
+  const todayStr = today();
+  const prevMonth = () => setCalDate(p => p.month===0 ? {year:p.year-1,month:11} : {...p,month:p.month-1});
+  const nextMonth = () => setCalDate(p => p.month===11 ? {year:p.year+1,month:0} : {...p,month:p.month+1});
+  const selectedStats = getOverallStats(selectedDate);
+
+  return (
+    <div style={{ paddingTop:12 }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
+        <button onClick={prevMonth} style={{ background:"#161620", border:"none", color:"#888", borderRadius:8, padding:"6px 12px", cursor:"pointer", fontSize:16 }}>‹</button>
+        <span style={{ fontWeight:600, fontSize:15 }}>{monthName}</span>
+        <button onClick={nextMonth} style={{ background:"#161620", border:"none", color:"#888", borderRadius:8, padding:"6px 12px", cursor:"pointer", fontSize:16 }}>›</button>
+      </div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:3, marginBottom:4 }}>
+        {["日","月","火","水","木","金","土"].map((d,i) => (
+          <div key={d} style={{ textAlign:"center", fontSize:11, color:i===0?"#f87171":i===6?"#93C5FD":"#555", paddingBottom:4 }}>{d}</div>
+        ))}
+      </div>
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:3, marginBottom:20 }}>
+        {Array(firstDay).fill(null).map((_,i) => <div key={`e${i}`} />)}
+        {datesInMonth.map(date => {
+          const stats = getOverallStats(date);
+          const isToday = date===todayStr, isSel = date===selectedDate, isFuture = date>todayStr;
+          const pct = isFuture ? 0 : stats.pct;
+          const hasData = stats.total > 0 && !isFuture;
+          return (
+            <div key={date} className="cal-day" onClick={() => setSelectedDate(date)} style={{
+              aspectRatio:"1", borderRadius:8, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:2,
+              background: isSel?"#6EE7B7":isToday?"#161e30":"#0f0f19",
+              border: isToday&&!isSel?"1px solid #1e3a5f":isSel?"none":"1px solid #14141e",
+              opacity:isFuture?0.35:1, position:"relative", overflow:"hidden"
+            }}>
+              {hasData && !isSel && <div style={{ position:"absolute", bottom:0, left:0, right:0, height:`${pct}%`, background:pct===100?"rgba(110,231,183,0.15)":"rgba(110,231,183,0.07)", transition:"height 0.3s" }} />}
+              <span style={{ fontSize:13, fontWeight:isSel?700:400, color:isSel?"#0a0a0f":isToday?"#6EE7B7":"#aaa", zIndex:1 }}>{new Date(date+"T00:00:00").getDate()}</span>
+              {hasData && <span style={{ fontSize:8, zIndex:1, color:isSel?"#0a0a0f99":pct===100?"#6EE7B7":"#555", fontWeight:600 }}>{pct}%</span>}
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={{ borderRadius:14, background:"#0f0f19", border:"1px solid #1e1e2e", padding:16 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+          <div>
+            <div style={{ fontSize:16, fontWeight:600 }}>{formatDate(selectedDate)} ({dayOfWeek(selectedDate)})</div>
+            <div style={{ fontSize:12, color:"#555", marginTop:2 }}>{selectedStats.done}/{selectedStats.total} タスク完了</div>
+          </div>
+          <div style={{ fontSize:24, fontWeight:700, color:"#6EE7B7" }}>{selectedStats.pct}%</div>
+        </div>
+        {categories.map(cat => {
+          const stats = getCategoryStats(cat.id, selectedDate);
+          const catTasks = tasks.filter(t => t.category===cat.id);
+          if (!catTasks.length) return null;
+          const comp = completions[selectedDate] || {};
+          return (
+            <div key={cat.id} style={{ marginBottom:12 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6, alignItems:"center" }}>
+                <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                  <span style={{ fontSize:12, color:cat.color, fontWeight:600 }}>{cat.label}</span>
+                </div>
+                {stats && <span style={{ fontSize:11, color:"#555" }}>{stats.pct}%</span>}
+              </div>
+              {catTasks.map(task => {
+                const done = comp[task.id];
+                return (
+                  <div key={task.id} onClick={() => onToggle(task.id, selectedDate)} style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer", padding:"5px 0" }}>
+                    <div style={{ width:16, height:16, borderRadius:4, border:`2px solid ${done?cat.color:"#2a2a3a"}`, background:done?cat.color:"transparent", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                      {done && <span style={{ fontSize:9, color:"#0a0a0f", fontWeight:700 }}>✓</span>}
+                    </div>
+                    <span style={{ fontSize:13, color:done?"#444":"#bbb", textDecoration:done?"line-through":"none" }}>{task.name}</span>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
